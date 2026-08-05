@@ -1,12 +1,10 @@
 # Life Game
 
-An interactive platform for exploring cellular automata and particle simulations in the browser, deployed as a static site on S3 + CloudFront via Terraform.
-
-This project is a derivative of [Sandbox Science](https://github.com/DicSo92/SandboxScience) by Charly Luzzi ([@DicSo92](https://github.com/DicSo92)), licensed under [AGPL-3.0-or-later](./LICENSE). Per that license, the full source of what's running in production is kept here, publicly.
+A browser game, deployed as a static site on S3 + CloudFront via Terraform.
 
 ## Structure
 
-- `frontend/` — Nuxt 3 / Vue app (the game/simulations)
+- `frontend/` — Nuxt 3 / Vue app
 - `infra/` — Terraform for the S3 bucket + CloudFront distribution
 
 ## Local development

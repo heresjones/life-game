@@ -1,20 +1,18 @@
 <template>
-    <NuxtLayout>
-        <NuxtPage />
-        <AppToasts />
-        <DonationModal />
-    </NuxtLayout>
+    <div id="game-root">
+        <DotCanvas :color="dotColor" />
+        <EditSidebar v-model="sidebarOpen">
+            <CollapseSection label="Visual" opened>
+                <div class="field-row">
+                    <span>Dot color</span>
+                    <ColorSwatchPicker v-model="dotColor" />
+                </div>
+            </CollapseSection>
+        </EditSidebar>
+    </div>
 </template>
 
 <script setup lang="ts">
-
+const dotColor = ref('#808080')
+const sidebarOpen = ref(false)
 </script>
-
-<style>
-html, body, #__nuxt {
-    height: auto; /* Allow height to expand with content */
-    min-height: 100vh; /* Ensure it covers at least the viewport height */
-    /* background: #222; */
-    color: white;
-}
-</style>

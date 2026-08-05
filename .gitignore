@@ -10,7 +10,6 @@ dist-ssr/
 frontend/dist
 *.local
 *.tsbuildinfo
-frontend/public/assets/fonts/
 
 # Logs
 logs

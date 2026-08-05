@@ -1,10 +1,10 @@
 {
     "name": "life-game",
-    "description": "Interactive cellular automata and particle simulations, built on top of Sandbox Science by Charly Luzzi (DicSo92).",
+    "description": "Interactive browser game.",
     "type": "module",
     "private": true,
-    "license": "AGPL-3.0-or-later",
-    "author": "Charly Luzzi (DicSo92), derivative work by heresjones",
+    "license": "UNLICENSED",
+    "author": "heresjones",
     "homepage": "https://github.com/heresjones/life-game",
     "repository": {
         "type": "git",
@@ -19,40 +19,15 @@
         "generate": "nuxt generate",
         "preview": "nuxt preview",
         "postinstall": "nuxt prepare",
-        "lint": "eslint .",
-        "lint:fix": "eslint . --fix",
         "typecheck": "vue-tsc --noEmit"
     },
     "devDependencies": {
-        "@antfu/eslint-config": "^6.7.1",
-        "@iconify-json/carbon": "^1.1.37",
-        "@iconify-json/fad": "^1.1.10",
-        "@iconify-json/game-icons": "^1.1.10",
-        "@iconify-json/lets-icons": "^1.1.3",
-        "@iconify-json/streamline-flex": "^1.2.3",
-        "@iconify-json/tabler": "^1.1.120",
-        "@nuxt/eslint": "^1.12.1",
-        "@unocss/eslint-config": "^66.5.10",
-        "@unocss/nuxt": "^66.5.10",
-        "@webgpu/types": "^0.1.68",
-        "eslint": "^9.39.2",
-        "eslint-plugin-format": "^1.1.0",
-        "sass": "^1.97.0",
-        "unocss": "^66.5.10",
+        "typescript": "~5.7.0",
         "vue-tsc": "^3.1.8"
     },
     "dependencies": {
-        "@nuxtjs/seo": "^3.3.0",
-        "@pinia/nuxt": "^0.11.3",
-        "@vueuse/core": "^14.1.0",
-        "@vueuse/nuxt": "^14.1.0",
-        "floating-vue": "^5.2.2",
-        "gifenc": "^1.0.3",
         "nuxt": "^3.20.2",
-        "nuxt-gtag": "^3.0.3",
-        "pinia": "^3.0.4",
         "vue": "^3.5.26",
-        "vue-router": "^4.6.4",
-        "zod": "^4.1.13"
+        "vue-router": "^4.6.4"
     }
 }
