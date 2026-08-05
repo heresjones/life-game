@@ -1,6 +1,7 @@
 :root {
   color-scheme: dark;
-  font: 18px/145% system-ui, 'Segoe UI', Roboto, sans-serif;
+  font: 16px/145% ui-rounded, 'SF Pro Rounded', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  letter-spacing: 0.01em;
 }
 
 html,
