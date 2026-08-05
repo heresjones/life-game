@@ -1,9 +1,16 @@
-# Node / Vite frontend
+# Node / Nuxt frontend
 node_modules/
 dist/
 dist-ssr/
+.output
+.data
+.nuxt
+.nitro
+.cache
+frontend/dist
 *.local
 *.tsbuildinfo
+frontend/public/assets/fonts/
 
 # Logs
 logs

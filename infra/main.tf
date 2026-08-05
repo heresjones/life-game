@@ -24,6 +24,14 @@ resource "aws_cloudfront_origin_access_control" "site" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_function" "directory_index" {
+  name    = "${var.project_name}-directory-index"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite directory-style requests (e.g. /game-of-life) to their index.html"
+  publish = true
+  code    = file("${path.module}/cloudfront-functions/directory-index.js")
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   default_root_object = "index.html"
@@ -48,19 +56,26 @@ resource "aws_cloudfront_distribution" "site" {
         forward = "none"
       }
     }
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.directory_index.arn
+    }
   }
 
-  # Single-page app fallback: unknown paths (e.g. client-side routes) serve index.html
+  # Unknown paths serve the site's generated 404 page (private bucket + OAC
+  # returns 403 for missing keys since it lacks s3:ListBucket, so both codes
+  # need mapping here)
   custom_error_response {
     error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
+    response_code      = 404
+    response_page_path = "/404.html"
   }
 
   custom_error_response {
     error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
+    response_code      = 404
+    response_page_path = "/404.html"
   }
 
   restrictions {

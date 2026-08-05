@@ -1,32 +1,22 @@
-# React + TypeScript + Vite
+# Life Game (frontend)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Nuxt 3 / Vue app powering the simulations. Based on [Sandbox Science](https://github.com/DicSo92/SandboxScience) by Charly Luzzi ([@DicSo92](https://github.com/DicSo92)), AGPL-3.0-or-later — see root [LICENSE](../LICENSE).
 
-Currently, two official plugins are available:
+## Develop
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Build (static export for S3/CloudFront)
+
+```bash
+npm run generate
+```
+
+Output goes to `.output/public/`.
+
+## Original project
+
+Copyright (C) 2024-2026 Charly Luzzi (DicSo92). This is a derivative work licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](../LICENSE).

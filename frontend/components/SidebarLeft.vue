@@ -1,0 +1,95 @@
+<template>
+    <div id="sidebarLeft" z-50> <!-- faded-hover-effect -->
+        <div fixed left-0 z-40 :style="toggleBtnStyle">
+            <NuxtLink to="/" title="Home" aria-label="Home">
+                <button type="button" name="Home" aria-label="Home" rounded-br-3xl btn flex items-center p-2
+                        class="-mt-0.5 -ml-1 mr-px ring-1 ring-slate-500 backdrop-blur-sm" bg="slate-900/85 hover:slate-950/85">
+                    <span class="i-custom:icon text-2xl"></span>
+                </button>
+            </NuxtLink>
+        </div>
+        <div absolute left-0 top-13 z-40 :style="toggleBtnStyle">
+            <button type="button" title="Settings" aria-label="Settings" rounded-r-3xl btn flex flex-col items-center pr-2
+                    class="-ml-1 pl-2 py-[14px] ring-1 ring-slate-500 backdrop-blur-sm" bg="cyan-900/85 hover:cyan-950/85" @click="toggle">
+<!--                <span i-tabler-settings text-lg mb-1></span>-->
+                <span class="relative flex mb-1">
+                    <span i-tabler-settings v-show="!modelValue" class="absolute inline-flex text-sm h-full w-full opacity-75 ping"></span>
+                    <span i-tabler-settings class="relative inline-flex text-lg"></span>
+                </span>
+                <span class="vertical-90 rotate-180" text-sm font-medium>Settings</span>
+            </button>
+        </div>
+        <div fixed left-2 bottom-2 z-40 :style="toggleBtnStyle" pointer-events-none>
+            <div class="flex flex-col items-start gap-1.5">
+                <slot name="bottom-actions"></slot>
+            </div>
+        </div>
+        <Transition enter-active-class="transform transition-transform ease-out duration-300"
+                    enter-from-class="-translate-x-full"
+                    enter-to-class="translate-x-0"
+                    leave-active-class="transform transition-transform ease-in duration-200 delay-75"
+                    leave-from-class="translate-x-0"
+                    leave-to-class="-translate-x-full">
+            <div v-show="modelValue" :style="`width: ${sidebarWidth}px`"
+                 class="z-50 fixed inset-y-0 left-0 max-w-full max-h-full flex border-r border-slate-600/80"> <!-- inset-y-0 for fullheight sidebar -->
+                <div class="h-full w-full flex flex-col py-2 bg-[#050818]/70 backdrop-blur-md shadow-xl"> <!-- bg-slate-950/70 -->
+                    <slot></slot>
+                </div>
+            </div>
+        </Transition>
+    </div>
+</template>
+
+<script lang="ts">
+import { defineComponent } from "vue";
+
+export default defineComponent({
+    props: {
+        modelValue: {
+            type: Boolean,
+            required: true
+        }
+    },
+    setup(props, { emit }) {
+        const sidebarWidth = ref(400)
+
+        function toggle() {
+            emit("update:modelValue", !props.modelValue)
+        }
+        const toggleBtnStyle = computed(() => ({
+            transition: props.modelValue
+                ? 'transform 0.3s cubic-bezier(0, 0, 0.2, 1) 15ms'
+                : 'transform 0.2s cubic-bezier(0.4, 0, 1, 1) 90ms',
+            transform: `translateX(${props.modelValue ? sidebarWidth.value : 0}px)`
+        }))
+
+
+        return { toggle, toggleBtnStyle, sidebarWidth }
+    }
+})
+</script>
+
+<style scoped>
+#sidebarLeftBtn {}
+.vertical-90 {
+    writing-mode: vertical-rl;
+    text-orientation: sideways;
+}
+.ping {
+    animation: ping 4s cubic-bezier(0,0,0.2,1) 4s infinite;
+}
+@keyframes ping {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    20% {
+        transform: scale(1.75);
+        opacity: 0;
+    }
+    100% {
+        transform: scale(1.75);
+        opacity: 0;
+    }
+}
+</style>
