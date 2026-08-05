@@ -5,7 +5,7 @@
             <CollapseSection label="Visual" opened>
                 <div class="field-row">
                     <span>Dot color</span>
-                    <ColorWheelPicker v-model="dotColor" />
+                    <OklchColorPicker v-model="dotColor" />
                 </div>
             </CollapseSection>
         </EditSidebar>
