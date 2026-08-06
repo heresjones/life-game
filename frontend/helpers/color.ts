@@ -23,7 +23,7 @@ function linearToSrgb(c: number): number {
     return c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055
 }
 
-export function oklchToRgb(L: number, C: number, hDeg: number): [number, number, number] {
+export function oklchToLinearRgb(L: number, C: number, hDeg: number): [number, number, number] {
     const hRad = (hDeg * Math.PI) / 180
     const a = C * Math.cos(hRad)
     const b = C * Math.sin(hRad)
@@ -40,11 +40,54 @@ export function oklchToRgb(L: number, C: number, hDeg: number): [number, number,
     const gLin = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
     const bLin = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
 
+    return [rLin, gLin, bLin]
+}
+
+export function isInSrgbGamut(rLin: number, gLin: number, bLin: number, eps = 1e-4): boolean {
+    return rLin >= -eps && rLin <= 1 + eps && gLin >= -eps && gLin <= 1 + eps && bLin >= -eps && bLin <= 1 + eps
+}
+
+export function oklchToRgb(L: number, C: number, hDeg: number): [number, number, number] {
+    const [rLin, gLin, bLin] = oklchToLinearRgb(L, C, hDeg)
+
     const r = Math.round(clamp(linearToSrgb(rLin)) * 255)
     const g = Math.round(clamp(linearToSrgb(gLin)) * 255)
     const bOut = Math.round(clamp(linearToSrgb(bLin)) * 255)
 
     return [r, g, bOut]
+}
+
+export const MAX_CHROMA = 0.4
+
+/**
+ * For each hue bucket, binary-search the largest chroma that's still inside
+ * the sRGB gamut at this lightness. The resulting curve's shape IS the
+ * gamut: the boundary of colors a screen can actually display at this L.
+ */
+export function computeSrgbMaxChromaCurve(L: number, buckets = 180, iterations = 14): Float64Array {
+    const curve = new Float64Array(buckets)
+    for (let i = 0; i < buckets; i++) {
+        const hue = (i / buckets) * 360
+        let lo = 0
+        let hi = MAX_CHROMA
+        for (let iter = 0; iter < iterations; iter++) {
+            const mid = (lo + hi) / 2
+            const [r, g, b] = oklchToLinearRgb(L, mid, hue)
+            if (isInSrgbGamut(r, g, b)) lo = mid
+            else hi = mid
+        }
+        curve[i] = lo
+    }
+    return curve
+}
+
+export function maxChromaAt(curve: Float64Array, hueDeg: number): number {
+    const n = curve.length
+    const pos = (((hueDeg % 360) + 360) % 360 / 360) * n
+    const i0 = Math.floor(pos) % n
+    const i1 = (i0 + 1) % n
+    const t = pos - Math.floor(pos)
+    return curve[i0] * (1 - t) + curve[i1] * t
 }
 
 export function rgbToOklch(r: number, g: number, b: number): { l: number; c: number; h: number } {

@@ -1,18 +1,30 @@
 <template>
     <div id="game-root">
-        <DotCanvas :color="dotColor" />
+        <DotCanvas
+            :dots="renderDots"
+            :highlighted="highlightedIds"
+            @canvas-click="onCanvasClick"
+            @drag-start="onDragStart"
+            @drag-move="onDragMove"
+            @drag-end="onDragEnd"
+        />
+        <PlaybackBar :paused="paused" @toggle="togglePause" />
         <EditSidebar v-model="sidebarOpen">
+            <DotInventoryBar />
+            <CollapseSection label="Groups">
+                <GroupsPanel />
+            </CollapseSection>
             <CollapseSection label="Visual" opened>
-                <div class="field-row">
-                    <span>Dot color</span>
-                    <OklchColorPicker v-model="dotColor" />
-                </div>
+                <VisualPanel />
             </CollapseSection>
         </EditSidebar>
     </div>
 </template>
 
 <script setup lang="ts">
-const dotColor = ref('#808080')
-const sidebarOpen = ref(false)
+const { renderDots, highlightedIds, paused, sidebarOpen, onCanvasClick, onDragStart, onDragMove, onDragEnd, togglePause, startPhysics, stopPhysics } =
+    useDotSimulation()
+
+onMounted(() => startPhysics())
+onUnmounted(() => stopPhysics())
 </script>

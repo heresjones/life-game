@@ -12,41 +12,11 @@
                 step="0.001"
                 :value="l"
                 :style="{ background: lGradient }"
-                @input="onInput('l', $event)"
+                @input="onLightnessInput"
             />
         </div>
 
-        <div class="channel">
-            <div class="channel-label">
-                <span>Chroma</span>
-                <span class="channel-value">{{ c.toFixed(3) }}</span>
-            </div>
-            <input
-                type="range"
-                min="0"
-                max="0.4"
-                step="0.001"
-                :value="c"
-                :style="{ background: cGradient }"
-                @input="onInput('c', $event)"
-            />
-        </div>
-
-        <div class="channel">
-            <div class="channel-label">
-                <span>Hue</span>
-                <span class="channel-value">{{ Math.round(h) }}&deg;</span>
-            </div>
-            <input
-                type="range"
-                min="0"
-                max="360"
-                step="1"
-                :value="h"
-                :style="{ background: hGradient }"
-                @input="onInput('h', $event)"
-            />
-        </div>
+        <GamutWheel :lightness="l" :chroma="c" :hue="h" @change="onWheelChange" />
 
         <div class="picker-footer">
             <div class="swatch-preview" :style="{ backgroundColor: hex }" />
@@ -63,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { hexToRgb, rgbToHex, oklchToRgb, rgbToOklch } from '~/helpers/color'
+import { hexToRgb, rgbToHex, oklchToRgb, rgbToOklch, MAX_CHROMA } from '~/helpers/color'
 
 const props = defineProps<{
     modelValue: string
@@ -73,7 +43,6 @@ const emit = defineEmits<{
 }>()
 
 const GRADIENT_STEPS = 12
-const MAX_CHROMA = 0.4
 
 const l = ref(0.6)
 const c = ref(0.15)
@@ -85,45 +54,38 @@ function syncFromHex(hexValue: string) {
     const oklch = rgbToOklch(...rgb)
     l.value = oklch.l
     c.value = oklch.c
-    // Near-grey colors have an unstable hue; keep the slider where it was.
+    // Near-grey colors have an unstable hue; keep the wheel marker where it was.
     if (oklch.c > 0.001) h.value = oklch.h
 }
 syncFromHex(props.modelValue)
 
 const hex = computed(() => rgbToHex(...oklchToRgb(l.value, c.value, h.value)))
 
-function buildGradient(channel: 'l' | 'c' | 'h') {
+const lGradient = computed(() => {
     const stops: string[] = []
     for (let i = 0; i <= GRADIENT_STEPS; i++) {
         const t = i / GRADIENT_STEPS
-        const Lv = channel === 'l' ? t : l.value
-        const Cv = channel === 'c' ? t * MAX_CHROMA : c.value
-        const Hv = channel === 'h' ? t * 360 : h.value
-        const [r, g, b] = oklchToRgb(Lv, Cv, Hv)
+        const [r, g, b] = oklchToRgb(t, c.value, h.value)
         stops.push(`rgb(${r} ${g} ${b})`)
     }
     return `linear-gradient(to right, ${stops.join(', ')})`
-}
-const lGradient = computed(() => buildGradient('l'))
-const cGradient = computed(() => buildGradient('c'))
-const hGradient = computed(() => buildGradient('h'))
+})
 
 function emitHex() {
     emit('update:modelValue', hex.value)
 }
 
-const MIN_VISIBLE_CHROMA = 0.1
+function onLightnessInput(e: Event) {
+    l.value = Number((e.target as HTMLInputElement).value)
+    // Keep chroma in this lightness's gamut so the marker doesn't visibly
+    // jump once the wheel recomputes its boundary for the new L.
+    c.value = Math.min(c.value, MAX_CHROMA)
+    emitHex()
+}
 
-function onInput(channel: 'l' | 'c' | 'h', e: Event) {
-    const v = Number((e.target as HTMLInputElement).value)
-    if (channel === 'l') l.value = v
-    else if (channel === 'c') c.value = v
-    else {
-        h.value = v
-        // Hue has no visual effect while achromatic; dragging it implies
-        // the user wants to introduce some color.
-        if (c.value < MIN_VISIBLE_CHROMA) c.value = MIN_VISIBLE_CHROMA
-    }
+function onWheelChange({ c: newC, h: newH }: { c: number; h: number }) {
+    c.value = newC
+    h.value = newH
     emitHex()
 }
 
