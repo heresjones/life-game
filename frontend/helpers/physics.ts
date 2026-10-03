@@ -1,18 +1,27 @@
-// Framework-agnostic simulation core: wall/friction integration, dot-dot
-// collision, and the repulsion/attraction force field. Nothing in this file
-// touches Vue — it's plain functions over plain data (Dot[], DotGroup[]),
-// so it can be reasoned about, tuned, and (eventually) unit-tested in
-// isolation from the reactive/UI layer. See composables/useDotSimulation.ts
-// for the Vue-specific wiring that calls into this each frame.
-import type { Dot, DotGroup } from './dot'
+// Framework-agnostic simulation core: wall/friction integration and the
+// repulsion/attraction force field. Dots have no hard physical body — there
+// is no dot-dot collision here, only the soft close/far force curve (see
+// repulsionForceAt below). Nothing in this file touches Vue — it's plain
+// functions over plain data (Dot[], DotGroup[]), so it can be reasoned
+// about, tuned, and (eventually) unit-tested in isolation from the
+// reactive/UI layer. See composables/useDotSimulation.ts for the
+// Vue-specific wiring that calls into this each frame.
+import type { Dot, DotGroup, TargetOverride } from './dot'
 
 export interface ResolvedTraits {
     radius: number
-    repulsionSelf: number
-    repulsionOthers: number
-    forceRange: number
+    closeSelf: number
+    farSelf: number
+    targetOverrides: TargetOverride[]
+    closeRange: number
+    farRange: number
     dragCoefficient: number
 }
+
+// Shared instance for the common case (ungrouped dot, or a group with no
+// overrides set) so resolving traits doesn't allocate a fresh empty array
+// for every dot on every frame.
+const NO_OVERRIDES: TargetOverride[] = []
 
 // --- Group resolution --------------------------------------------------
 // A dot with no group uses its own color/size/repulsion/range; a grouped
@@ -36,28 +45,46 @@ export function resolveRadius(dot: Dot, groupsById: Map<string, DotGroup>): numb
     return dot.radius
 }
 
-export function resolveRepulsionSelf(dot: Dot, groupsById: Map<string, DotGroup>): number {
+export function resolveCloseSelf(dot: Dot, groupsById: Map<string, DotGroup>): number {
     if (dot.groupId) {
         const group = groupsById.get(dot.groupId)
-        if (group) return group.repulsionSelf
+        if (group) return group.closeSelf
     }
-    return dot.repulsionSelf
+    return dot.closeSelf
 }
 
-export function resolveRepulsionOthers(dot: Dot, groupsById: Map<string, DotGroup>): number {
+export function resolveFarSelf(dot: Dot, groupsById: Map<string, DotGroup>): number {
     if (dot.groupId) {
         const group = groupsById.get(dot.groupId)
-        if (group) return group.repulsionOthers
+        if (group) return group.farSelf
     }
-    return dot.repulsionOthers
+    return dot.farSelf
 }
 
-export function resolveForceRange(dot: Dot, groupsById: Map<string, DotGroup>): number {
+// Only a grouped dot can have per-target overrides — an ungrouped dot has no
+// group identity yet for another group to be overridden against.
+export function resolveTargetOverrides(dot: Dot, groupsById: Map<string, DotGroup>): TargetOverride[] {
     if (dot.groupId) {
         const group = groupsById.get(dot.groupId)
-        if (group) return group.forceRange
+        if (group) return group.targetOverrides
     }
-    return dot.forceRange
+    return NO_OVERRIDES
+}
+
+export function resolveCloseRange(dot: Dot, groupsById: Map<string, DotGroup>): number {
+    if (dot.groupId) {
+        const group = groupsById.get(dot.groupId)
+        if (group) return group.closeRange
+    }
+    return dot.closeRange
+}
+
+export function resolveFarRange(dot: Dot, groupsById: Map<string, DotGroup>): number {
+    if (dot.groupId) {
+        const group = groupsById.get(dot.groupId)
+        if (group) return group.farRange
+    }
+    return dot.farRange
 }
 
 export function resolveDragCoefficient(dot: Dot, groupsById: Map<string, DotGroup>): number {
@@ -73,17 +100,21 @@ export function resolveTraits(dot: Dot, groupsById: Map<string, DotGroup>): Reso
     if (group) {
         return {
             radius: group.radius,
-            repulsionSelf: group.repulsionSelf,
-            repulsionOthers: group.repulsionOthers,
-            forceRange: group.forceRange,
+            closeSelf: group.closeSelf,
+            farSelf: group.farSelf,
+            targetOverrides: group.targetOverrides,
+            closeRange: group.closeRange,
+            farRange: group.farRange,
             dragCoefficient: group.dragCoefficient,
         }
     }
     return {
         radius: dot.radius,
-        repulsionSelf: dot.repulsionSelf,
-        repulsionOthers: dot.repulsionOthers,
-        forceRange: dot.forceRange,
+        closeSelf: dot.closeSelf,
+        farSelf: dot.farSelf,
+        targetOverrides: NO_OVERRIDES,
+        closeRange: dot.closeRange,
+        farRange: dot.farRange,
         dragCoefficient: dot.dragCoefficient,
     }
 }
@@ -92,49 +123,93 @@ export function resolveTraits(dot: Dot, groupsById: Map<string, DotGroup>): Reso
 
 export const STOP_SPEED = 15 // px/s below which a dot is considered at rest
 export const WALL_RESTITUTION = 0.35 // fraction of speed kept after bouncing off a wall — a soft bounce, not a superball
-// Dot-dot collisions lose some energy too, not just walls — otherwise a dot that
-// plunges in fast (e.g. a hard throw, or the near-contact singularity of a strong
-// attraction force) bounces back out at very close to the same speed it came in
-// with, which is enough to escape a finite-range attraction disc for good instead
-// of settling into a cluster.
-export const COLLISION_RESTITUTION = 0.5
 export const MAX_SUBSTEPS = 8
-// Keeps x away from 0 so the repulsion formula doesn't divide by zero — this
-// alone already bounds the force (strength * sqrt(1-MIN_X)/MIN_X), so there's
-// no separate cap on top of it capping things prematurely at high strength.
-export const REPULSION_MIN_X = 0.02
-// The color a dot renders isn't a hard shell — it's more of a soft field, so
-// two dots are allowed to nestle into each other by this fraction of their
-// combined radius before the hard collision stops them going any further.
-export const OVERLAP_ALLOWANCE = 0.15
-export const SPAWN_PADDING = 0.1
+// Dots have no hard physical body — nothing stops them from fully
+// overlapping or passing through each other. Spacing between dots comes
+// entirely from the close/far force curve below (or from nothing at all, if
+// there's no force between them). MIN_SPAWN_GAP is unrelated to that — it
+// only keeps a freshly spawned/copied dot from landing exactly on top of an
+// existing one, which would make them indistinguishable at the moment of
+// creation regardless of what happens to them physically afterward.
+export const MIN_SPAWN_GAP = 0.65 // fraction of combined radii
+export const SPAWN_PADDING = 0.1 // fraction of screen kept clear along each edge when placing a new dot
 
 export function clampToWalls(px: number, maxPx: number, radius: number): number {
     return Math.min(maxPx - radius, Math.max(radius, px))
 }
 
-export function collisionMinDist(radiusA: number, radiusB: number): number {
-    return (radiusA + radiusB) * (1 - OVERLAP_ALLOWANCE)
+export function spawnMinDist(radiusA: number, radiusB: number): number {
+    return (radiusA + radiusB) * MIN_SPAWN_GAP
 }
 
 // --- Repulsion / attraction force field -----------------------------------
-// A soft force field around each dot — its own "disc" hitbox, a multiple of
-// its visual size (forceRange, a separate knob from strength) — independent
-// of the hard no-overlap collision below. Force falls off from very strong
-// near the center to zero at the disc's edge: f(x) = sqrt(1-x)/x, x =
-// distance / discRadius. Strength can go negative, which flips this from a
-// push into a pull (attraction) — the sign just flows straight through.
+// A soft force field around each dot — the ONLY thing governing spacing
+// between dots, since there's no hard collision body. CLOSE is an inner
+// disc; FAR is a ring just beyond it. Each has its OWN reach (closeRange/
+// farRange, a multiple of the dot's own visual size — separate knobs from
+// strength), so one can be much bigger than the other:
+//
+//        ┌───────────── farRange ─────────────┐
+//        ┌── closeRange ──┐
+//   ─────┼────────────────┼──────────────────┼─────  distance from center
+//        0            (close edge)      (far edge)
+//        │←── CLOSE zone ─→│←──── FAR zone ────→│
+//      force                                  force
+//    -> ∞ near both        peak at            = 0
+//    ends (see below)   boundary, = 2     (outer edge)
+//      (contact)    (zone boundary)
+//
+// Far can push or pull; within its zone the force follows one ripple of a
+// cosine wave shifted up by one — starting at its peak of 2 right at the
+// close/far boundary and easing back to zero at its own outer edge. That
+// shape is what makes it bounded (no divide-by-zero blowup) while still
+// landing at zero at the outer edge.
+//
+// Close is always repulsive, and — per Evan's design — uses a DIFFERENT,
+// unbounded falloff: 1 / (t * sqrt(1 - t^2)), t ∈ (0, 1) being how far
+// through the close zone (0 = contact, 1 = the close/far boundary). Unlike
+// the far zone's cosine ripple, this spikes toward infinity at BOTH ends —
+// at contact and again right at the close/far boundary — rather than
+// settling to zero. t is clamped a hair inside (0, 1) purely so a dot at
+// (near-)exact contact or (near-)exact zone-boundary distance can't produce
+// an actual Infinity/NaN force, which would permanently corrupt its
+// vx/vy (nothing ever resets a NaN position) — the clamp caps the peak
+// magnitude, it doesn't change the curve's shape.
+const CLOSE_ENVELOPE_EPSILON = 0.001
 
-export function repulsionForceAt(strength: number, x: number): number {
-    if (strength === 0) return 0
-    const xc = Math.max(x, REPULSION_MIN_X)
-    const magnitude = Math.sqrt(1 - xc) / xc
-    return strength * magnitude
+// t ∈ [0, 1]: how far through THIS zone (not the whole disc).
+function closeEnvelopeAt(t: number): number {
+    const x = Math.min(1 - CLOSE_ENVELOPE_EPSILON, Math.max(CLOSE_ENVELOPE_EPSILON, t))
+    return 1 / (x * Math.sqrt(1 - x * x))
+}
+
+function farEnvelopeAt(t: number): number {
+    return 1 + Math.cos(Math.PI * t)
+}
+
+export function repulsionForceAt(
+    closeStrength: number,
+    farStrength: number,
+    dist: number,
+    closeRangePx: number,
+    farRangePx: number,
+): number {
+    if (dist <= 0) return 0
+    if (dist < closeRangePx) {
+        if (closeStrength === 0) return 0
+        return closeStrength * closeEnvelopeAt(dist / closeRangePx)
+    }
+    const farEdge = closeRangePx + farRangePx
+    if (dist < farEdge) {
+        if (farStrength === 0) return 0
+        return farStrength * farEnvelopeAt((dist - closeRangePx) / farRangePx)
+    }
+    return 0
 }
 
 // --- Spatial grid broad-phase ---------------------------------------------
 // Rebuilt each sub-step from current positions. Any two dots that could
-// possibly interact (whether by repulsion/attraction or hard collision) are
+// possibly interact (via the repulsion/attraction force field) are
 // guaranteed to end up in the same cell or an adjacent one, as long as
 // cellSize >= the largest interaction distance present (the caller computes
 // that bound each frame). Cells are visited with only "forward" neighbor
@@ -194,6 +269,33 @@ export function forEachNearbyPair(
     }
 }
 
+interface Interaction {
+    close: number
+    far: number
+    closeRange: number
+    farRange: number
+}
+
+// A dot's close/far strength AND reach against a specific other dot: its
+// per-target override for that dot's group, if it has one — both strength
+// and range come from the override, not the group's own closeRange/farRange,
+// so a group's reach toward one specific other group can differ from its
+// reach toward its own members. With no override, there's no generic
+// "others" fallback, so two groups with no override between them (or
+// anything involving an ungrouped dot) simply don't exert soft force on each
+// other — the range values don't matter then since strength is zero, and
+// with no hard collision body, they simply overlap freely.
+function otherInteractionAt(traits: ResolvedTraits, otherGroupId: string | null): Interaction {
+    if (otherGroupId) {
+        for (const override of traits.targetOverrides) {
+            if (override.targetGroupId === otherGroupId) {
+                return { close: override.close, far: override.far, closeRange: override.closeRange, farRange: override.farRange }
+            }
+        }
+    }
+    return { close: 0, far: 0, closeRange: traits.closeRange, farRange: traits.farRange }
+}
+
 export function applyRepulsion(
     list: Dot[],
     traits: ResolvedTraits[],
@@ -215,19 +317,34 @@ export function applyRepulsion(
         const nx = dx / dist
         const ny = dy / dist
 
-        // Each dot is its own force source: a repulsion of 0 pushes
-        // nothing away, but a dot can still be pushed by a neighbor
-        // that has repulsion, regardless of its own value. Which of a
-        // dot's two strengths applies depends on whether the OTHER dot
-        // is in its same group ("self") or not ("others").
+        // Each dot is its own force source: a dot can be pushed (or pulled)
+        // by any neighbor with a nonzero close/far strength, regardless of
+        // its own. Which strength/range pair applies depends on whether the
+        // OTHER dot is in its same group ("self", using its own
+        // closeRange/farRange) or a group it has a specific override for
+        // (using THAT override's own range) — anything else exerts no force.
         const sameGroup = a.groupId !== null && a.groupId === b.groupId
-        const aStrength = sameGroup ? ta.repulsionSelf : ta.repulsionOthers
-        const bStrength = sameGroup ? tb.repulsionSelf : tb.repulsionOthers
-        const aDisc = ta.radius * ta.forceRange
-        const bDisc = tb.radius * tb.forceRange
-        let force = 0
-        if (dist < aDisc) force += repulsionForceAt(aStrength, dist / aDisc)
-        if (dist < bDisc) force += repulsionForceAt(bStrength, dist / bDisc)
+        const aInteraction: Interaction = sameGroup
+            ? { close: ta.closeSelf, far: ta.farSelf, closeRange: ta.closeRange, farRange: ta.farRange }
+            : otherInteractionAt(ta, b.groupId)
+        const bInteraction: Interaction = sameGroup
+            ? { close: tb.closeSelf, far: tb.farSelf, closeRange: tb.closeRange, farRange: tb.farRange }
+            : otherInteractionAt(tb, a.groupId)
+        const force =
+            repulsionForceAt(
+                aInteraction.close,
+                aInteraction.far,
+                dist,
+                ta.radius * aInteraction.closeRange,
+                ta.radius * aInteraction.farRange,
+            ) +
+            repulsionForceAt(
+                bInteraction.close,
+                bInteraction.far,
+                dist,
+                tb.radius * bInteraction.closeRange,
+                tb.radius * bInteraction.farRange,
+            )
         if (force === 0) return // negative force is attraction, still very much "active"
 
         const aFixed = a.id === draggingDotId
@@ -246,78 +363,6 @@ export function applyRepulsion(
     return pushed
 }
 
-// --- Hard collision (no-overlap-beyond-tolerance) -------------------------
-
-function pushApart(dot: Dot, nx: number, ny: number, amount: number, w: number, h: number, radius: number) {
-    dot.xFrac = clampToWalls(dot.xFrac * w + nx * amount, w, radius) / w
-    dot.yFrac = clampToWalls(dot.yFrac * h + ny * amount, h, radius) / h
-}
-
-function stopApproaching(dot: Dot, nx: number, ny: number) {
-    const vn = dot.vx * nx + dot.vy * ny
-    if (vn < 0) {
-        dot.vx -= vn * nx
-        dot.vy -= vn * ny
-    }
-}
-
-export function resolveCollisions(
-    list: Dot[],
-    traits: ResolvedTraits[],
-    cellSize: number,
-    w: number,
-    h: number,
-    draggingDotId: string | null,
-) {
-    forEachNearbyPair(list, cellSize, w, h, (i, j) => {
-        const a = list[i]
-        const b = list[j]
-        const ra = traits[i].radius
-        const rb = traits[j].radius
-        const ax = a.xFrac * w
-        const ay = a.yFrac * h
-        const bx = b.xFrac * w
-        const by = b.yFrac * h
-        const dx = bx - ax
-        const dy = by - ay
-        const dist = Math.hypot(dx, dy) || 0.0001
-        const minDist = collisionMinDist(ra, rb)
-        if (dist >= minDist) return
-
-        const overlap = minDist - dist
-        const nx = dx / dist
-        const ny = dy / dist
-        const aFixed = a.id === draggingDotId
-        const bFixed = b.id === draggingDotId
-
-        if (aFixed && bFixed) return
-        if (aFixed) {
-            pushApart(b, nx, ny, overlap, w, h, rb)
-            stopApproaching(b, nx, ny)
-        } else if (bFixed) {
-            pushApart(a, -nx, -ny, overlap, w, h, ra)
-            stopApproaching(a, -nx, -ny)
-        } else {
-            pushApart(a, -nx, -ny, overlap / 2, w, h, ra)
-            pushApart(b, nx, ny, overlap / 2, w, h, rb)
-            // Equal-mass collision with restitution: exchange the velocity component
-            // along the normal, scaled so only COLLISION_RESTITUTION of the closing
-            // speed survives as separating speed (1 = fully elastic, matches the old
-            // behavior). relVel = (a.v - b.v)·n is positive exactly when they're
-            // approaching (closing distance) — only bounce then, so an already-
-            // separating overlap doesn't get re-swapped and stick/jitter.
-            const relVel = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny
-            if (relVel > 0) {
-                const impulse = (relVel * (1 + COLLISION_RESTITUTION)) / 2
-                a.vx -= impulse * nx
-                a.vy -= impulse * ny
-                b.vx += impulse * nx
-                b.vy += impulse * ny
-            }
-        }
-    })
-}
-
 // --- Per-substep integration -----------------------------------------------
 
 export function stepPhysics(
@@ -331,8 +376,7 @@ export function stepPhysics(
     draggingDotId: string | null,
 ) {
     // While paused, nothing should start moving on its own — no friction
-    // glide, no repulsion push. Collisions still resolve below so dragging a
-    // dot around while paused can still shove others out of the way.
+    // glide, no repulsion push.
     if (!paused) {
         // Apply forces first, so a dot currently being pushed carries that
         // velocity into this frame's integration below (and isn't zeroed by
@@ -368,8 +412,6 @@ export function stepPhysics(
             dot.yFrac = y / h
         }
     }
-
-    resolveCollisions(list, traits, cellSize, w, h, draggingDotId)
 }
 
 // --- Spawn placement: new/copied dots must never overlap an existing one ---
@@ -388,7 +430,7 @@ export function overlapsAny(
     const y = yFrac * h
     return list.some((d) => {
         if (d.id === excludeId) return false
-        return Math.hypot(d.xFrac * w - x, d.yFrac * h - y) < collisionMinDist(resolveRadius(d, groupsById), radius)
+        return Math.hypot(d.xFrac * w - x, d.yFrac * h - y) < spawnMinDist(resolveRadius(d, groupsById), radius)
     })
 }
 

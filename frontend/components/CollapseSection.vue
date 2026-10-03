@@ -44,7 +44,7 @@ const isOpen = ref(!!props.opened)
 }
 
 .chevron {
-    font-size: 10px;
+    font-size: calc(10px * var(--ui-font-scale, 1));
     transition: transform 0.15s ease;
 }
 

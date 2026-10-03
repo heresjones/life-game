@@ -57,7 +57,7 @@ const width = 280
 
 .chevron {
     display: inline-block;
-    font-size: 12px;
+    font-size: calc(12px * var(--ui-font-scale, 1));
     transition: transform 0.2s ease;
 }
 

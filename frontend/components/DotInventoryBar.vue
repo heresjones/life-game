@@ -72,7 +72,7 @@ const { dots, selectedDot, activeGroup, selectedColor, undoState, groupNameProxy
     align-items: center;
     gap: 8px;
     color: rgba(255, 255, 255, 0.8);
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
     min-width: 0;
 }
 
@@ -88,7 +88,7 @@ const { dots, selectedDot, activeGroup, selectedColor, undoState, groupNameProxy
 .no-selection {
     margin: 0;
     color: rgba(255, 255, 255, 0.45);
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .inventory-actions {
@@ -105,7 +105,7 @@ const { dots, selectedDot, activeGroup, selectedColor, undoState, groupNameProxy
 
 .group-label {
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -120,12 +120,12 @@ const { dots, selectedDot, activeGroup, selectedColor, undoState, groupNameProxy
     border-radius: 999px;
     color: #f3f4f6;
     padding: 4px 12px;
-    font-size: 12px;
+    font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .dot-count {
     margin: 0;
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
     color: rgba(255, 255, 255, 0.4);
 }
 </style>

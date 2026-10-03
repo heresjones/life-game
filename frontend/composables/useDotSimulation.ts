@@ -3,14 +3,24 @@
 // useDotSimulation() — from app.vue or any sidebar component — shares the
 // exact same state; there's only ever one simulation on screen.
 import type { Dot, DotGroup, RenderDot } from '~/helpers/dot'
-import { DOT_RADIUS, DEFAULT_REPULSION, DEFAULT_FORCE_RANGE, DEFAULT_DRAG_COEFFICIENT } from '~/helpers/dot'
+import {
+    DOT_RADIUS,
+    DEFAULT_CLOSE_FORCE,
+    DEFAULT_FAR_FORCE,
+    DEFAULT_CLOSE_RANGE,
+    DEFAULT_FAR_RANGE,
+    DEFAULT_DRAG_COEFFICIENT,
+    DEFAULT_DOT_COLOR,
+    GROUP_COLOR_PALETTE,
+} from '~/helpers/dot'
 import {
     MAX_SUBSTEPS,
     resolveColor,
     resolveRadius,
-    resolveRepulsionSelf,
-    resolveRepulsionOthers,
-    resolveForceRange,
+    resolveCloseSelf,
+    resolveFarSelf,
+    resolveCloseRange,
+    resolveFarRange,
     resolveDragCoefficient,
     resolveTraits,
     stepPhysics,
@@ -27,16 +37,28 @@ function makeGroupId() {
     return `group-${nextGroupId++}`
 }
 
-const dots = ref<Dot[]>([
+// shallowRef, not ref: the physics loop mutates xFrac/yFrac/vx/vy on every
+// dot, every sub-step, every frame. A deep-reactive ref would wrap every dot
+// in a Proxy and pay tracking/trigger overhead on each of those writes —
+// multiplied by dot count and up to MAX_SUBSTEPS, 60 times a second. With
+// shallowRef, dot objects are plain (no Proxy), so the hot physics path is
+// just ordinary property writes; nothing here is reactive to Vue by
+// default. Anything that needs the rest of the app to notice a change
+// (adding/removing a dot, a dot's groupId changing) calls triggerRef(dots)
+// explicitly — see spawnDot/addToGroup/promoteToGroup/onCanvasClick below.
+// Reassigning dots.value itself (undoAdd, deleteSelected) still triggers
+// automatically, same as any ref.
+const dots = shallowRef<Dot[]>([
     {
         id: makeId(),
         xFrac: 0.5,
         yFrac: 0.5,
-        color: '#808080',
+        color: DEFAULT_DOT_COLOR,
         radius: DOT_RADIUS,
-        repulsionSelf: DEFAULT_REPULSION,
-        repulsionOthers: DEFAULT_REPULSION,
-        forceRange: DEFAULT_FORCE_RANGE,
+        closeSelf: DEFAULT_CLOSE_FORCE,
+        farSelf: DEFAULT_FAR_FORCE,
+        closeRange: DEFAULT_CLOSE_RANGE,
+        farRange: DEFAULT_FAR_RANGE,
         dragCoefficient: DEFAULT_DRAG_COEFFICIENT,
         groupId: null,
         vx: 0,
@@ -83,15 +105,19 @@ const highlightedIds = computed<string[]>(() => {
     return []
 })
 
-const renderDots = computed<RenderDot[]>(() =>
-    dots.value.map((d) => ({
+// Deliberately a plain function, not a computed: with dots as a shallowRef,
+// nothing marks this "dirty" as positions change every physics frame (that's
+// the point — see the comment on `dots` above). The animation loop below
+// calls this directly, every frame, to get a fresh snapshot for drawing.
+function getRenderDots(): RenderDot[] {
+    return dots.value.map((d) => ({
         id: d.id,
         xFrac: d.xFrac,
         yFrac: d.yFrac,
         color: resolveColor(d, groupsById.value),
         radius: resolveRadius(d, groupsById.value),
-    })),
-)
+    }))
+}
 
 function onCanvasClick({ id, xFrac, yFrac }: { id: string | null; xFrac: number; yFrac: number }) {
     if (id) {
@@ -125,14 +151,16 @@ function onCanvasClick({ id, xFrac, yFrac }: { id: string | null; xFrac: number;
                 yFrac: py,
                 color: group.color,
                 radius: group.radius,
-                repulsionSelf: group.repulsionSelf,
-                repulsionOthers: group.repulsionOthers,
-                forceRange: group.forceRange,
+                closeSelf: group.closeSelf,
+                farSelf: group.farSelf,
+                closeRange: group.closeRange,
+                farRange: group.farRange,
                 dragCoefficient: group.dragCoefficient,
                 groupId: group.id,
                 vx: 0,
                 vy: 0,
             })
+            triggerRef(dots) // structural change (new dot) — dots is a shallowRef, see above
         }
         return
     }
@@ -217,6 +245,10 @@ function resume() {
 
 let rafId: number | null = null
 let lastFrameTime = 0
+// Set by startPhysics. Called at the end of every tick, paused or not, so
+// drag/highlight/selection changes show up on the very next frame without
+// needing a Vue watcher on top of this loop — see DotCanvas.redraw().
+let onFrame: (() => void) | null = null
 
 function physicsTick(time: number) {
     const dt = lastFrameTime ? Math.min((time - lastFrameTime) / 1000, 0.05) : 0
@@ -232,10 +264,10 @@ function physicsTick(time: number) {
         const traits = list.map((d) => resolveTraits(d, groupsById.value))
 
         // A dot moving fast enough to cross more than its own radius in one
-        // frame could skip clean past another dot without ever registering
-        // as overlapping ("tunneling"). Sub-step so no single step moves
-        // further than the smallest dot currently on screen. The same pass
-        // also finds the biggest disc/collision reach present, which sizes
+        // frame could skip clean past another dot's force field without ever
+        // registering as being inside it ("tunneling"). Sub-step so no single
+        // step moves further than the smallest dot currently on screen. The
+        // same pass also finds the biggest force reach present, which sizes
         // the spatial grid used to skip far-apart pairs entirely.
         let maxSpeed = 0
         let minRadius = DOT_RADIUS
@@ -243,7 +275,14 @@ function physicsTick(time: number) {
         for (let i = 0; i < list.length; i++) {
             maxSpeed = Math.max(maxSpeed, Math.hypot(list[i].vx, list[i].vy))
             minRadius = Math.min(minRadius, traits[i].radius)
-            maxReach = Math.max(maxReach, traits[i].radius * traits[i].forceRange, traits[i].radius * 2)
+            // A per-group override can have its own closeRange/farRange, possibly
+            // bigger than the group's own — the grid has to be sized to the
+            // largest reach actually in play, override or not.
+            let ownZoneSpan = traits[i].closeRange + traits[i].farRange
+            for (const override of traits[i].targetOverrides) {
+                ownZoneSpan = Math.max(ownZoneSpan, override.closeRange + override.farRange)
+            }
+            maxReach = Math.max(maxReach, traits[i].radius * ownZoneSpan, traits[i].radius * 2)
         }
         const cellSize = Math.max(maxReach, 20)
 
@@ -261,10 +300,16 @@ function physicsTick(time: number) {
     // another dot enters its disc (e.g. right after a spawn), and there's no
     // cheap way to know that in advance without just checking every frame —
     // for the dot counts this game deals with, that check is free anyway.
+    onFrame?.()
     rafId = requestAnimationFrame(physicsTick)
 }
 
-function startPhysics() {
+// onFrameCallback fires once per tick, after the physics step — app.vue
+// passes in a callback that pulls a fresh getRenderDots() snapshot and hands
+// it straight to DotCanvas's imperative redraw(), bypassing Vue's reactivity
+// for the render path entirely (see the `dots` shallowRef comment above).
+function startPhysics(onFrameCallback?: () => void) {
+    onFrame = onFrameCallback ?? null
     if (rafId === null) {
         lastFrameTime = 0
         rafId = requestAnimationFrame(physicsTick)
@@ -276,6 +321,7 @@ function stopPhysics() {
         cancelAnimationFrame(rafId)
         rafId = null
     }
+    onFrame = null
 }
 
 // --- Groups ---------------------------------------------------------------
@@ -298,33 +344,83 @@ function promoteToGroup(
     overrides: {
         color?: string
         radius?: number
-        repulsionSelf?: number
-        repulsionOthers?: number
-        forceRange?: number
+        closeSelf?: number
+        farSelf?: number
+        closeRange?: number
+        farRange?: number
         dragCoefficient?: number
     },
 ): DotGroup {
+    // Promoting via the color editor carries that exact color over. Promoting
+    // via anything else (a force slider, etc.) picks a fresh palette color
+    // instead of whatever the dot's own .color happens to currently hold —
+    // that's never a deliberate choice for THIS new group, since the only way
+    // to deliberately set a still-ungrouped dot's color is the color editor,
+    // which always supplies overrides.color itself. Any other value there is
+    // just inherited from Add Dot's "copy the selected dot" convenience, and
+    // reusing it would make every group created that way collapse onto the
+    // same handful of colors — indistinguishable from each other, most
+    // confusingly in the per-group override list below.
     const newGroup: DotGroup = {
         id: makeGroupId(),
         name: '',
-        color: overrides.color ?? resolveColor(dot, groupsById.value),
+        color: overrides.color ?? GROUP_COLOR_PALETTE[groups.value.length % GROUP_COLOR_PALETTE.length],
         radius: overrides.radius ?? resolveRadius(dot, groupsById.value),
-        repulsionSelf: overrides.repulsionSelf ?? resolveRepulsionSelf(dot, groupsById.value),
-        repulsionOthers: overrides.repulsionOthers ?? resolveRepulsionOthers(dot, groupsById.value),
-        forceRange: overrides.forceRange ?? resolveForceRange(dot, groupsById.value),
+        closeSelf: overrides.closeSelf ?? resolveCloseSelf(dot, groupsById.value),
+        farSelf: overrides.farSelf ?? resolveFarSelf(dot, groupsById.value),
+        targetOverrides: [],
+        closeRange: overrides.closeRange ?? resolveCloseRange(dot, groupsById.value),
+        farRange: overrides.farRange ?? resolveFarRange(dot, groupsById.value),
         dragCoefficient: overrides.dragCoefficient ?? resolveDragCoefficient(dot, groupsById.value),
     }
     groups.value.push(newGroup)
     dot.groupId = newGroup.id
+    triggerRef(dots) // groupId changed on an existing dot object — dots is a shallowRef, see above
     return newGroup
 }
 
 function pruneOrphanGroups() {
     const usedGroupIds = new Set(dots.value.map((d) => d.groupId).filter((id): id is string => id !== null))
     groups.value = groups.value.filter((g) => usedGroupIds.has(g.id))
+    // A group that just got pruned might still be some OTHER group's override
+    // target — drop those too, or they'd silently point at nothing.
+    for (const g of groups.value) {
+        g.targetOverrides = g.targetOverrides.filter((o) => usedGroupIds.has(o.targetGroupId))
+    }
     if (selectedGroupListId.value && !usedGroupIds.has(selectedGroupListId.value)) {
         selectedGroupListId.value = null
     }
+}
+
+// --- Per-target-group overrides --------------------------------------------
+// A group's only way to exert force on another specific group — without an
+// override for it, the two groups don't interact via soft force at all
+// (e.g. add an override to attract group B specifically, while everything
+// else stays completely neutral by default).
+
+const overridableGroups = computed<DotGroup[]>(() => {
+    if (!activeGroup.value) return []
+    const overriddenIds = new Set(activeGroup.value.targetOverrides.map((o) => o.targetGroupId))
+    return groups.value.filter((g) => g.id !== activeGroup.value!.id && !overriddenIds.has(g.id))
+})
+
+function addTargetOverride(targetGroupId: string) {
+    const group = activeGroup.value
+    if (!group || group.id === targetGroupId) return
+    if (group.targetOverrides.some((o) => o.targetGroupId === targetGroupId)) return
+    group.targetOverrides.push({
+        targetGroupId,
+        close: DEFAULT_CLOSE_FORCE,
+        far: DEFAULT_FAR_FORCE,
+        closeRange: DEFAULT_CLOSE_RANGE,
+        farRange: DEFAULT_FAR_RANGE,
+    })
+}
+
+function removeTargetOverride(targetGroupId: string) {
+    const group = activeGroup.value
+    if (!group) return
+    group.targetOverrides = group.targetOverrides.filter((o) => o.targetGroupId !== targetGroupId)
 }
 
 // --- Selected-dot/group editable properties -------------------------------
@@ -336,7 +432,7 @@ const selectedColor = computed({
     get: () => {
         if (selectedDot.value) return resolveColor(selectedDot.value, groupsById.value)
         if (activeGroup.value) return activeGroup.value.color
-        return '#808080'
+        return DEFAULT_DOT_COLOR
     },
     set: (newColor: string) => {
         if (!selectedDot.value && activeGroup.value) {
@@ -376,68 +472,90 @@ const selectedSize = computed({
     },
 })
 
-const selectedRepulsionSelf = computed({
+const selectedCloseSelf = computed({
     get: () => {
-        if (selectedDot.value) return resolveRepulsionSelf(selectedDot.value, groupsById.value)
-        if (activeGroup.value) return activeGroup.value.repulsionSelf
-        return DEFAULT_REPULSION
+        if (selectedDot.value) return resolveCloseSelf(selectedDot.value, groupsById.value)
+        if (activeGroup.value) return activeGroup.value.closeSelf
+        return DEFAULT_CLOSE_FORCE
     },
-    set: (newRepulsion: number) => {
+    set: (newValue: number) => {
         if (!selectedDot.value && activeGroup.value) {
-            activeGroup.value.repulsionSelf = newRepulsion
+            activeGroup.value.closeSelf = newValue
             return
         }
         const dot = selectedDot.value
         if (!dot) return
         if (dot.groupId) {
             const group = groupsById.value.get(dot.groupId)
-            if (group) group.repulsionSelf = newRepulsion
+            if (group) group.closeSelf = newValue
         } else {
-            promoteToGroup(dot, { repulsionSelf: newRepulsion })
+            promoteToGroup(dot, { closeSelf: newValue })
         }
     },
 })
 
-const selectedRepulsionOthers = computed({
+const selectedFarSelf = computed({
     get: () => {
-        if (selectedDot.value) return resolveRepulsionOthers(selectedDot.value, groupsById.value)
-        if (activeGroup.value) return activeGroup.value.repulsionOthers
-        return DEFAULT_REPULSION
+        if (selectedDot.value) return resolveFarSelf(selectedDot.value, groupsById.value)
+        if (activeGroup.value) return activeGroup.value.farSelf
+        return DEFAULT_FAR_FORCE
     },
-    set: (newRepulsion: number) => {
+    set: (newValue: number) => {
         if (!selectedDot.value && activeGroup.value) {
-            activeGroup.value.repulsionOthers = newRepulsion
+            activeGroup.value.farSelf = newValue
             return
         }
         const dot = selectedDot.value
         if (!dot) return
         if (dot.groupId) {
             const group = groupsById.value.get(dot.groupId)
-            if (group) group.repulsionOthers = newRepulsion
+            if (group) group.farSelf = newValue
         } else {
-            promoteToGroup(dot, { repulsionOthers: newRepulsion })
+            promoteToGroup(dot, { farSelf: newValue })
         }
     },
 })
 
-const selectedForceRange = computed({
+const selectedCloseRange = computed({
     get: () => {
-        if (selectedDot.value) return resolveForceRange(selectedDot.value, groupsById.value)
-        if (activeGroup.value) return activeGroup.value.forceRange
-        return DEFAULT_FORCE_RANGE
+        if (selectedDot.value) return resolveCloseRange(selectedDot.value, groupsById.value)
+        if (activeGroup.value) return activeGroup.value.closeRange
+        return DEFAULT_CLOSE_RANGE
     },
     set: (newRange: number) => {
         if (!selectedDot.value && activeGroup.value) {
-            activeGroup.value.forceRange = newRange
+            activeGroup.value.closeRange = newRange
             return
         }
         const dot = selectedDot.value
         if (!dot) return
         if (dot.groupId) {
             const group = groupsById.value.get(dot.groupId)
-            if (group) group.forceRange = newRange
+            if (group) group.closeRange = newRange
         } else {
-            promoteToGroup(dot, { forceRange: newRange })
+            promoteToGroup(dot, { closeRange: newRange })
+        }
+    },
+})
+
+const selectedFarRange = computed({
+    get: () => {
+        if (selectedDot.value) return resolveFarRange(selectedDot.value, groupsById.value)
+        if (activeGroup.value) return activeGroup.value.farRange
+        return DEFAULT_FAR_RANGE
+    },
+    set: (newRange: number) => {
+        if (!selectedDot.value && activeGroup.value) {
+            activeGroup.value.farRange = newRange
+            return
+        }
+        const dot = selectedDot.value
+        if (!dot) return
+        if (dot.groupId) {
+            const group = groupsById.value.get(dot.groupId)
+            if (group) group.farRange = newRange
+        } else {
+            promoteToGroup(dot, { farRange: newRange })
         }
     },
 })
@@ -476,9 +594,10 @@ const groupNameProxy = computed({
 interface SpawnTraits {
     color: string
     radius: number
-    repulsionSelf: number
-    repulsionOthers: number
-    forceRange: number
+    closeSelf: number
+    farSelf: number
+    closeRange: number
+    farRange: number
     dragCoefficient: number
     groupId: string | null
 }
@@ -487,6 +606,7 @@ function spawnDot(xFrac: number, yFrac: number, traits: SpawnTraits) {
     const previousSelectedId = selectedDotId.value
     const newDot: Dot = { id: makeId(), xFrac, yFrac, ...traits, vx: 0, vy: 0 }
     dots.value.push(newDot)
+    triggerRef(dots) // structural change (new dot) — dots is a shallowRef, see above
     undoState.value = { addedId: newDot.id, previousSelectedId }
     selectedDotId.value = newDot.id
 }
@@ -501,11 +621,12 @@ function addDot() {
     const radius = source ? resolveRadius(source, groupsById.value) : DOT_RADIUS
     const { xFrac, yFrac } = randomPosition(dots.value, radius, w, h, groupsById.value)
     spawnDot(xFrac, yFrac, {
-        color: source ? resolveColor(source, groupsById.value) : '#808080',
+        color: source ? resolveColor(source, groupsById.value) : DEFAULT_DOT_COLOR,
         radius,
-        repulsionSelf: source ? resolveRepulsionSelf(source, groupsById.value) : DEFAULT_REPULSION,
-        repulsionOthers: source ? resolveRepulsionOthers(source, groupsById.value) : DEFAULT_REPULSION,
-        forceRange: source ? resolveForceRange(source, groupsById.value) : DEFAULT_FORCE_RANGE,
+        closeSelf: source ? resolveCloseSelf(source, groupsById.value) : DEFAULT_CLOSE_FORCE,
+        farSelf: source ? resolveFarSelf(source, groupsById.value) : DEFAULT_FAR_FORCE,
+        closeRange: source ? resolveCloseRange(source, groupsById.value) : DEFAULT_CLOSE_RANGE,
+        farRange: source ? resolveFarRange(source, groupsById.value) : DEFAULT_FAR_RANGE,
         dragCoefficient: source ? resolveDragCoefficient(source, groupsById.value) : DEFAULT_DRAG_COEFFICIENT,
         groupId: null,
     })
@@ -524,9 +645,10 @@ function copySelected() {
     spawnDot(xFrac, yFrac, {
         color: resolveColor(dot, groupsById.value),
         radius,
-        repulsionSelf: resolveRepulsionSelf(dot, groupsById.value),
-        repulsionOthers: resolveRepulsionOthers(dot, groupsById.value),
-        forceRange: resolveForceRange(dot, groupsById.value),
+        closeSelf: resolveCloseSelf(dot, groupsById.value),
+        farSelf: resolveFarSelf(dot, groupsById.value),
+        closeRange: resolveCloseRange(dot, groupsById.value),
+        farRange: resolveFarRange(dot, groupsById.value),
         dragCoefficient: resolveDragCoefficient(dot, groupsById.value),
         groupId: dot.groupId,
     })
@@ -541,8 +663,8 @@ function addToGroup(groupId: string) {
     const w = window.innerWidth
     const h = window.innerHeight
     // Spawn next to an existing member (not just anywhere on the canvas) so
-    // it lands within the group's own force range — otherwise "own group
-    // force" has nothing to act on until the dots happen to be dragged close.
+    // it lands within the group's own close/far range — otherwise "own
+    // close/far force" has nothing to act on until the dots are dragged close.
     const anchor = dots.value.find((d) => d.groupId === groupId)
     const { xFrac, yFrac } = anchor
         ? nearbyPosition(dots.value, anchor.xFrac, anchor.yFrac, group.radius, w, h, groupsById.value)
@@ -553,14 +675,16 @@ function addToGroup(groupId: string) {
         yFrac,
         color: group.color,
         radius: group.radius,
-        repulsionSelf: group.repulsionSelf,
-        repulsionOthers: group.repulsionOthers,
-        forceRange: group.forceRange,
+        closeSelf: group.closeSelf,
+        farSelf: group.farSelf,
+        closeRange: group.closeRange,
+        farRange: group.farRange,
         dragCoefficient: group.dragCoefficient,
         groupId,
         vx: 0,
         vy: 0,
     })
+    triggerRef(dots) // structural change (new dot) — dots is a shallowRef, see above
 }
 
 function undoAdd() {
@@ -595,12 +719,13 @@ export function useDotSimulation() {
         selectedDot,
         activeGroup,
         highlightedIds,
-        renderDots,
+        getRenderDots,
         selectedColor,
         selectedSize,
-        selectedRepulsionSelf,
-        selectedRepulsionOthers,
-        selectedForceRange,
+        selectedCloseSelf,
+        selectedFarSelf,
+        selectedCloseRange,
+        selectedFarRange,
         selectedDragCoefficient,
         groupNameProxy,
         // Canvas input
@@ -615,6 +740,9 @@ export function useDotSimulation() {
         // Groups
         selectGroupList,
         memberCount,
+        overridableGroups,
+        addTargetOverride,
+        removeTargetOverride,
         // Inventory actions
         addDot,
         copySelected,

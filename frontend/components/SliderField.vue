@@ -91,7 +91,7 @@ function reset() {
 
 .slider-hint {
     color: rgba(255, 255, 255, 0.4);
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .reset-btn {
@@ -172,7 +172,7 @@ function reset() {
     border-radius: 999px;
     color: #f3f4f6;
     padding: 3px 8px;
-    font-size: 12px;
+    font-size: calc(12px * var(--ui-font-scale, 1));
     text-align: center;
 }
 /* Hide native spinners so the box stays a clean pill. */

@@ -36,7 +36,7 @@ const { groups, selectedGroupListId, selectGroupList, memberCount, addToGroup } 
 .no-selection {
     margin: 0;
     color: rgba(255, 255, 255, 0.45);
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .group-list {
@@ -58,7 +58,7 @@ const { groups, selectedGroupListId, selectGroupList, memberCount, addToGroup } 
     border-radius: 8px;
     padding: 6px 8px;
     color: rgba(255, 255, 255, 0.8);
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
     cursor: pointer;
 }
 .group-list-item:hover {
@@ -88,7 +88,7 @@ const { groups, selectedGroupListId, selectGroupList, memberCount, addToGroup } 
 
 .group-count {
     flex-shrink: 0;
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
     color: rgba(255, 255, 255, 0.45);
 }
 </style>

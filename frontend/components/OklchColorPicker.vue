@@ -124,7 +124,7 @@ watch(
 .channel-label {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -201,7 +201,7 @@ input[type='range']::-moz-range-thumb {
     border-radius: 999px;
     color: #f3f4f6;
     padding: 6px 14px;
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
     letter-spacing: 0.04em;
     text-transform: uppercase;
     text-align: center;

@@ -162,7 +162,7 @@ function updateFromPointer(e: PointerEvent) {
 
 .hl {
     position: absolute;
-    font-size: 11px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
     color: rgba(255, 255, 255, 0.4);
 }
 .hl-0 {

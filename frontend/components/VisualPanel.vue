@@ -12,29 +12,41 @@
             v-model="selectedSize"
         />
         <SliderField
-            label="Own group force"
-            hint="(+repel / −attract)"
-            :min="MIN_REPULSION"
-            :max="MAX_REPULSION"
-            :reset-value="0"
-            v-model="selectedRepulsionSelf"
+            label="Own close force"
+            hint="(always repels)"
+            :min="MIN_CLOSE_FORCE"
+            :max="MAX_CLOSE_FORCE"
+            :reset-value="DEFAULT_CLOSE_FORCE"
+            v-model="selectedCloseSelf"
         />
         <SliderField
-            label="Other particles force"
+            label="Own far force"
             hint="(+repel / −attract)"
-            :min="MIN_REPULSION"
-            :max="MAX_REPULSION"
-            :reset-value="0"
-            v-model="selectedRepulsionOthers"
+            :min="MIN_FAR_FORCE"
+            :max="MAX_FAR_FORCE"
+            :reset-value="DEFAULT_FAR_FORCE"
+            v-model="selectedFarSelf"
         />
+        <GroupOverridesPanel v-if="activeGroup" />
         <SliderField
-            label="Force range"
-            :min="MIN_FORCE_RANGE"
-            :max="MAX_FORCE_RANGE"
+            label="Close range"
+            :min="MIN_ZONE_RANGE"
+            :max="MAX_ZONE_RANGE"
             :step="0.5"
-            :reset-value="DEFAULT_FORCE_RANGE"
-            v-model="selectedForceRange"
+            :reset-value="DEFAULT_CLOSE_RANGE"
+            v-model="selectedCloseRange"
         />
+        <SliderField
+            label="Far range"
+            :min="MIN_ZONE_RANGE"
+            :max="MAX_ZONE_RANGE"
+            :step="0.5"
+            :reset-value="DEFAULT_FAR_RANGE"
+            v-model="selectedFarRange"
+        />
+        <p class="range-readout">
+            Close {{ Math.round(closeRangePx) }}px + Far {{ Math.round(farRangePx) }}px = {{ Math.round(totalRangePx) }}px total
+        </p>
         <SliderField
             label="Drag"
             hint="(higher = stops sooner)"
@@ -53,11 +65,16 @@ import {
     DOT_RADIUS,
     MIN_DOT_RADIUS,
     MAX_DOT_RADIUS,
-    MIN_REPULSION,
-    MAX_REPULSION,
-    MIN_FORCE_RANGE,
-    MAX_FORCE_RANGE,
-    DEFAULT_FORCE_RANGE,
+    MIN_CLOSE_FORCE,
+    MAX_CLOSE_FORCE,
+    DEFAULT_CLOSE_FORCE,
+    MIN_FAR_FORCE,
+    MAX_FAR_FORCE,
+    DEFAULT_FAR_FORCE,
+    MIN_ZONE_RANGE,
+    MAX_ZONE_RANGE,
+    DEFAULT_CLOSE_RANGE,
+    DEFAULT_FAR_RANGE,
     MIN_DRAG_COEFFICIENT,
     MAX_DRAG_COEFFICIENT,
     DEFAULT_DRAG_COEFFICIENT,
@@ -68,21 +85,36 @@ const {
     activeGroup,
     selectedColor,
     selectedSize,
-    selectedRepulsionSelf,
-    selectedRepulsionOthers,
-    selectedForceRange,
+    selectedCloseSelf,
+    selectedFarSelf,
+    selectedCloseRange,
+    selectedFarRange,
     selectedDragCoefficient,
 } = useDotSimulation()
+
+// Close range and far range are each an abstract multiplier on the dot's own
+// radius, independently sized (see helpers/physics.ts) — this is what they
+// actually work out to in pixels, which is different for every dot/group
+// since radius and both ranges can all vary.
+const closeRangePx = computed(() => selectedSize.value * selectedCloseRange.value)
+const farRangePx = computed(() => selectedSize.value * selectedFarRange.value)
+const totalRangePx = computed(() => closeRangePx.value + farRangePx.value)
 </script>
 
 <style scoped>
 .no-selection {
     margin: 0;
     color: rgba(255, 255, 255, 0.45);
-    font-size: 13px;
+    font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .field-row + .field-row {
     margin-top: 14px;
+}
+
+.range-readout {
+    margin: -2px 0 0;
+    font-size: calc(11px * var(--ui-font-scale, 1));
+    color: rgba(255, 255, 255, 0.4);
 }
 </style>

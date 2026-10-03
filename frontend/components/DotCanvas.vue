@@ -6,10 +6,6 @@
 import { clamp } from '~/helpers/color'
 import type { RenderDot } from '~/helpers/dot'
 
-const props = defineProps<{
-    dots: RenderDot[]
-    highlighted: string[]
-}>()
 const emit = defineEmits<{
     'canvas-click': [{ id: string | null; xFrac: number; yFrac: number }]
     'drag-start': [string]
@@ -26,6 +22,13 @@ const canvasEl = ref<HTMLCanvasElement>()
 let draggingId: string | null = null
 let dragHistory: { t: number; x: number; y: number }[] = []
 
+// Plain (non-reactive) — the parent hands these in imperatively every
+// animation frame via redraw(), not as reactive props. Vue never needs to
+// know these changed; draw()/hitTest() just read whatever was handed in
+// most recently.
+let currentDots: RenderDot[] = []
+let currentHighlighted: Set<string> = new Set()
+
 function draw() {
     const canvas = canvasEl.value
     if (!canvas) return
@@ -37,9 +40,7 @@ function draw() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    const highlightedIds = new Set(props.highlighted)
-
-    for (const dot of props.dots) {
+    for (const dot of currentDots) {
         const cx = dot.xFrac * canvas.width
         const cy = dot.yFrac * canvas.height
 
@@ -48,7 +49,7 @@ function draw() {
         ctx.arc(cx, cy, dot.radius, 0, Math.PI * 2)
         ctx.fill()
 
-        if (highlightedIds.has(dot.id)) {
+        if (currentHighlighted.has(dot.id)) {
             ctx.strokeStyle = '#ffffff'
             ctx.lineWidth = OUTLINE_WIDTH
             ctx.beginPath()
@@ -58,10 +59,18 @@ function draw() {
     }
 }
 
+// Called by app.vue once per rAF tick (see useDotSimulation's onFrame) —
+// this IS the render path; there's no Vue watcher behind it.
+function redraw(dots: RenderDot[], highlighted: string[]) {
+    currentDots = dots
+    currentHighlighted = new Set(highlighted)
+    draw()
+}
+
 function hitTest(canvas: HTMLCanvasElement, x: number, y: number): string | null {
     let closestId: string | null = null
     let closestDist = Infinity
-    for (const dot of props.dots) {
+    for (const dot of currentDots) {
         const cx = dot.xFrac * canvas.width
         const cy = dot.yFrac * canvas.height
         const dist = Math.hypot(x - cx, y - cy)
@@ -144,8 +153,8 @@ onMounted(() => {
 onUnmounted(() => {
     window.removeEventListener('resize', draw)
 })
-watch(() => props.dots, draw, { deep: true })
-watch(() => props.highlighted, draw)
+
+defineExpose({ redraw })
 </script>
 
 <style scoped>
